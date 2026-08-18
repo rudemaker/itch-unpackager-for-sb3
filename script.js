@@ -1,7 +1,15 @@
+// CORS Proxy services (multiple fallbacks)
+const CORS_PROXIES = [
+    'https://cors-anywhere.herokuapp.com/',
+    'https://api.allorigins.win/raw?url=',
+    'https://proxy.cors.sh/'
+];
+
+let currentProxyIndex = 0;
+
 // DOM Elements
-const uploadBox = document.getElementById('uploadBox');
-const selectBtn = document.getElementById('selectBtn');
-const fileInput = document.getElementById('fileInput');
+const urlInput = document.getElementById('urlInput');
+const extractBtn = document.getElementById('extractBtn');
 const progress = document.getElementById('progress');
 const progressText = document.getElementById('progressText');
 const result = document.getElementById('result');
@@ -14,77 +22,90 @@ const errorResetBtn = document.getElementById('errorResetBtn');
 
 // State
 let extractedHTML = null;
-let originalFileName = '';
+let gameURL = '';
 
 // Event Listeners
-selectBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', handleFileSelect);
-
-uploadBox.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadBox.classList.add('dragover');
+extractBtn.addEventListener('click', handleExtract);
+urlInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') handleExtract();
 });
-
-uploadBox.addEventListener('dragleave', () => {
-    uploadBox.classList.remove('dragover');
-});
-
-uploadBox.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadBox.classList.remove('dragover');
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-        fileInput.files = files;
-        handleFileSelect({ target: fileInput });
-    }
-});
-
 downloadBtn.addEventListener('click', downloadExtractedHTML);
 resetBtn.addEventListener('click', resetUI);
 errorResetBtn.addEventListener('click', resetUI);
 
 // Functions
-function handleFileSelect(e) {
-    const file = e.target.files[0];
+function handleExtract() {
+    const url = urlInput.value.trim();
     
-    if (!file) return;
-    
-    if (!file.name.endsWith('.html')) {
-        showError('Please select an HTML file.');
+    if (!url) {
+        showError('Please enter a valid URL.');
         return;
     }
     
-    originalFileName = file.name;
-    processFile(file);
+    if (!isValidURL(url)) {
+        showError('Please enter a valid URL (e.g., https://example.itch.io/your-game).');
+        return;
+    }
+    
+    gameURL = url;
+    currentProxyIndex = 0;
+    fetchGameHTML(url);
 }
 
-function processFile(file) {
+function isValidURL(string) {
+    try {
+        new URL(string);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function fetchGameHTML(url) {
     hideAllSections();
     progress.style.display = 'block';
+    progressText.textContent = `Fetching game HTML (attempt ${currentProxyIndex + 1})...`;
     
-    const reader = new FileReader();
+    const proxyURL = CORS_PROXIES[currentProxyIndex] + encodeURIComponent(url);
     
-    reader.onload = (e) => {
-        try {
-            const htmlContent = e.target.result;
-            const extracted = extractHTMLFromGame(htmlContent);
-            
-            if (extracted) {
-                extractedHTML = extracted;
-                showResult();
-            } else {
-                showError('Could not extract HTML from this file. It may not be a valid itch.io HTML5 game or the format is not supported.');
+    fetch(proxyURL)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
-        } catch (error) {
-            showError(`Error processing file: ${error.message}`);
-        }
-    };
-    
-    reader.onerror = () => {
-        showError('Failed to read the file.');
-    };
-    
-    reader.readAsText(file);
+            return response.text();
+        })
+        .then(htmlContent => {
+            try {
+                const extracted = extractHTMLFromGame(htmlContent);
+                
+                if (extracted) {
+                    extractedHTML = extracted;
+                    showResult();
+                } else {
+                    if (currentProxyIndex < CORS_PROXIES.length - 1) {
+                        // Try next proxy
+                        currentProxyIndex++;
+                        fetchGameHTML(url);
+                    } else {
+                        showError('Could not extract HTML from this URL. It may not be a valid itch.io HTML5 game or the format is not supported.');
+                    }
+                }
+            } catch (error) {
+                showError(`Error processing content: ${error.message}`);
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            
+            // Try next proxy if available
+            if (currentProxyIndex < CORS_PROXIES.length - 1) {
+                currentProxyIndex++;
+                fetchGameHTML(url);
+            } else {
+                showError(`Failed to fetch the game HTML. Error: ${error.message}. Make sure the URL is correct and accessible.`);
+            }
+        });
 }
 
 function extractHTMLFromGame(htmlContent) {
@@ -132,11 +153,18 @@ function extractHTMLFromGame(htmlContent) {
         }
     }
     
-    // Pattern 5: Extract the entire HTML if it seems to be a game container
+    // Pattern 5: Look for iframe src with game content
+    let iframeMatch = htmlContent.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+    if (iframeMatch && iframeMatch[1]) {
+        // Try to fetch iframe content
+        return iframeMatch[1];
+    }
+    
+    // Pattern 6: Extract the entire HTML if it seems to be a game container
     // Sometimes the whole file IS the game HTML wrapped
     if (htmlContent.includes('<!DOCTYPE') || htmlContent.includes('<html')) {
         // Check if this looks like a TurboWarp or similar packaged game
-        if (htmlContent.includes('canvas') || htmlContent.includes('WebGL') || htmlContent.includes('itch')) {
+        if (htmlContent.includes('canvas') || htmlContent.includes('WebGL') || htmlContent.includes('itch') || htmlContent.includes('game')) {
             // Try to extract just the game HTML part
             let htmlMatch = htmlContent.match(/<!DOCTYPE[^>]*>([\s\S]*)<\/html>/i);
             if (htmlMatch) {
@@ -213,10 +241,10 @@ function downloadExtractedHTML() {
 }
 
 function resetUI() {
-    fileInput.value = '';
-    uploadBox.classList.remove('dragover');
+    urlInput.value = '';
+    urlInput.focus();
     hideAllSections();
-    uploadBox.style.display = 'block';
+    extractBtn.style.display = 'inline-block';
     extractedHTML = null;
-    originalFileName = '';
+    gameURL = '';
 }
