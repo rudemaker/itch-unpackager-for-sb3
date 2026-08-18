@@ -54,8 +54,16 @@ function handleExtract() {
         return;
     }
     
+    // Check if URL is already an itch.zone link
+    if (url.includes('html-classic.itch.zone')) {
+        log('Direct itch.zone URL detected, fetching HTML directly...');
+        gameURL = url;
+        fetchExtractedHTML(url);
+        return;
+    }
+    
     if (!isValidURL(url)) {
-        showError('Please enter a valid URL (e.g., https://talihi.itch.io/music-life).', debugLog);
+        showError('Please enter a valid URL (e.g., https://talihi.itch.io/music-life) or an itch.zone HTML URL.', debugLog);
         return;
     }
     
@@ -76,13 +84,12 @@ function isValidURL(string) {
 function fetchGamePage(url) {
     hideAllSections();
     progress.style.display = 'block';
-    progressText.textContent = `Step 1: Fetching game page...`;
+    progressText.textContent = `Step 1: Fetching game page...\n(Note: If this fails, you can open DevTools (F12) in the game page, go to Network tab, find the request to html-classic.itch.zone and copy that URL here)`;
     
     log(`Fetching game page from: ${url}`);
     
     const proxyURL = CORS_PROXIES[currentProxyIndex] + encodeURIComponent(url);
     log(`Using proxy: ${CORS_PROXIES[currentProxyIndex]}`);
-    log(`Proxy URL: ${proxyURL}`);
     
     fetch(proxyURL)
         .then(response => {
@@ -100,28 +107,30 @@ function fetchGamePage(url) {
                 const htmlZoneLink = extractItchZoneLink(htmlContent);
                 
                 if (htmlZoneLink) {
-                    log(`Found itch.zone link: ${htmlZoneLink}`);
-                    progressText.textContent = `Step 2: Fetching extracted HTML...`;
+                    log(`Found itch.zone link: ${htmlZoneLink}`, 'success');
+                    progressText.textContent = `Step 2: Fetching extracted HTML from itch.zone...`;
                     fetchExtractedHTML(htmlZoneLink);
                 } else {
                     log('No itch.zone link found in page HTML', 'warning');
+                    log('HTML content sample (first 1000 chars): ' + htmlContent.substring(0, 1000));
                     
-                    // Try alternative: look for data in the page itself
-                    const extracted = extractHTMLFromGame(htmlContent);
-                    if (extracted) {
-                        log('Found embedded HTML in page', 'success');
-                        extractedHTML = extracted;
-                        showResult();
+                    if (currentProxyIndex < CORS_PROXIES.length - 1) {
+                        log(`Trying next proxy (${currentProxyIndex + 1}/${CORS_PROXIES.length})...`);
+                        currentProxyIndex++;
+                        fetchGamePage(gameURL);
                     } else {
-                        log('No extractable content found', 'error');
-                        
-                        if (currentProxyIndex < CORS_PROXIES.length - 1) {
-                            log(`Trying next proxy (${currentProxyIndex + 1}/${CORS_PROXIES.length})...`);
-                            currentProxyIndex++;
-                            fetchGamePage(gameURL);
-                        } else {
-                            showError('Could not find itch.zone HTML link or embedded content in the page. This game may not be a packaged HTML5 game.', debugLog);
-                        }
+                        showError(
+                            'Could not find itch.zone HTML link in the page.\n\n' +
+                            'ALTERNATIVE METHOD:\n' +
+                            '1. Open the game page in your browser\n' +
+                            '2. Open DevTools (F12 or Right-click → Inspect)\n' +
+                            '3. Go to the Network tab\n' +
+                            '4. Reload the page (F5)\n' +
+                            '5. Look for a request to "html-classic.itch.zone" (it will look like: https://html-classic.itch.zone/html/NUMBERS/index.html?v=NUMBERS)\n' +
+                            '6. Copy that full URL and paste it in the input field above\n' +
+                            '7. Click Extract HTML',
+                            debugLog
+                        );
                     }
                 }
             } catch (error) {
@@ -134,19 +143,33 @@ function fetchGamePage(url) {
             
             // Try next proxy if available
             if (currentProxyIndex < CORS_PROXIES.length - 1) {
-                log(`Proxy failed, trying next proxy (${currentProxyIndex + 2}/${CORS_PROXIES.length})...`);
+                log(`Proxy ${currentProxyIndex + 1} failed, trying next proxy...`);
                 currentProxyIndex++;
                 fetchGamePage(gameURL);
             } else {
-                showError(`Failed to fetch the game page. Error: ${error.message}. Make sure the URL is correct and the page is accessible.`, debugLog);
+                showError(
+                    `Failed to fetch the game page using all available proxies.\n\n` +
+                    `Error: ${error.message}\n\n` +
+                    `ALTERNATIVE METHOD:\n` +
+                    `1. Open the game page in your browser\n` +
+                    `2. Open DevTools (F12 or Right-click → Inspect)\n` +
+                    `3. Go to the Network tab\n` +
+                    `4. Reload the page (F5)\n` +
+                    `5. Look for a request to "html-classic.itch.zone"\n` +
+                    `6. Copy that full URL (like: https://html-classic.itch.zone/html/NUMBERS/index.html?v=NUMBERS)\n` +
+                    `7. Paste it in the input field above\n` +
+                    `8. Click Extract HTML`,
+                    debugLog
+                );
             }
         });
 }
 
 function fetchExtractedHTML(htmlZoneLink) {
-    log(`Fetching extracted HTML from: ${htmlZoneLink}`);
+    log(`Fetching extracted HTML from itch.zone: ${htmlZoneLink}`);
+    progressText.textContent = `Fetching HTML from itch.zone...`;
     
-    // Try direct fetch first (may not work due to CORS)
+    // Try direct fetch first
     fetch(htmlZoneLink, {
         method: 'GET',
         mode: 'cors',
@@ -155,16 +178,26 @@ function fetchExtractedHTML(htmlZoneLink) {
         }
     })
         .then(response => {
-            log(`Extracted HTML response status: ${response.status} ${response.statusText}`);
+            log(`Direct fetch response status: ${response.status} ${response.statusText}`);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
             }
             return response.text();
         })
         .then(htmlContent => {
-            log(`Extracted HTML received, length: ${htmlContent.length} characters`, 'success');
-            extractedHTML = htmlContent;
-            showResult();
+            log(`HTML received from itch.zone, length: ${htmlContent.length} characters`, 'success');
+            log('Content starts with: ' + htmlContent.substring(0, 200));
+            
+            // Verify it's actually HTML game content, not the itch.io page
+            if (htmlContent.includes('<!DOCTYPE') || htmlContent.includes('<html')) {
+                log('Valid HTML structure detected', 'success');
+                extractedHTML = htmlContent;
+                showResult();
+            } else {
+                log('Content does not appear to be valid HTML', 'warning');
+                extractedHTML = htmlContent;
+                showResult();
+            }
         })
         .catch(error => {
             log(`Direct fetch failed: ${error.message}`, 'warning');
@@ -172,6 +205,8 @@ function fetchExtractedHTML(htmlZoneLink) {
             
             // Fall back to CORS proxy
             const proxyURL = CORS_PROXIES[0] + encodeURIComponent(htmlZoneLink);
+            log(`Using CORS proxy: ${proxyURL}`);
+            
             fetch(proxyURL)
                 .then(response => {
                     log(`CORS proxy response status: ${response.status}`);
@@ -181,13 +216,19 @@ function fetchExtractedHTML(htmlZoneLink) {
                     return response.text();
                 })
                 .then(htmlContent => {
-                    log(`Extracted HTML via CORS proxy received, length: ${htmlContent.length} characters`, 'success');
+                    log(`HTML received via CORS proxy, length: ${htmlContent.length} characters`, 'success');
                     extractedHTML = htmlContent;
                     showResult();
                 })
                 .catch(proxyError => {
                     log(`CORS proxy also failed: ${proxyError.message}`, 'error');
-                    showError(`Failed to fetch extracted HTML. Direct error: ${error.message}. CORS proxy error: ${proxyError.message}`, debugLog);
+                    showError(
+                        `Failed to fetch extracted HTML from itch.zone.\n\n` +
+                        `Direct fetch error: ${error.message}\n` +
+                        `CORS proxy error: ${proxyError.message}\n\n` +
+                        `The itch.zone server may be blocking requests. Please try again later or use a different game.`,
+                        debugLog
+                    );
                 });
         });
 }
@@ -195,26 +236,45 @@ function fetchExtractedHTML(htmlZoneLink) {
 function extractItchZoneLink(htmlContent) {
     log('Searching for itch.zone HTML link in page content...');
     
-    // Pattern: https://html-classic.itch.zone/html/numbers/index.html
+    // Pattern 1: Direct itch.zone HTML links
     const pattern = /https:\/\/html-classic\.itch\.zone\/html\/\d+\/index\.html(?:\?v=\d+)?/gi;
     const matches = htmlContent.match(pattern);
     
     if (matches && matches.length > 0) {
-        log(`Found ${matches.length} itch.zone link(s)`);
+        log(`Found ${matches.length} direct itch.zone link(s)`, 'success');
         matches.forEach((link, index) => {
             log(`  [${index + 1}] ${link}`);
         });
-        return matches[0]; // Return the first match
+        return matches[0];
     }
     
-    log('No itch.zone links found', 'warning');
+    log('No direct itch.zone links found');
     
-    // Also try searching in iframe src attributes
-    const iframePattern = /src=["']([^"']*html-classic\.itch\.zone[^"']*)["']/gi;
-    const iframeMatches = htmlContent.match(iframePattern);
+    // Pattern 2: In script src attributes
+    const scriptSrcPattern = /src=["']([^"']*html-classic\.itch\.zone[^"']*)["']/gi;
+    const scriptMatches = htmlContent.match(scriptSrcPattern);
+    
+    if (scriptMatches && scriptMatches.length > 0) {
+        log(`Found ${scriptMatches.length} script tag(s) with itch.zone`);
+        scriptMatches.forEach((match, index) => {
+            log(`  [${index + 1}] ${match}`);
+            const urlMatch = match.match(/src=["']([^"']+)["']/);
+            if (urlMatch) {
+                log(`    Extracted: ${urlMatch[1]}`);
+            }
+        });
+        const srcMatch = scriptMatches[0].match(/src=["']([^"']+)["']/);
+        if (srcMatch) {
+            return srcMatch[1];
+        }
+    }
+    
+    // Pattern 3: In iframe src attributes
+    const iframeSrcPattern = /src=["']([^"']*html-classic\.itch\.zone[^"']*)["']/gi;
+    const iframeMatches = htmlContent.match(iframeSrcPattern);
     
     if (iframeMatches && iframeMatches.length > 0) {
-        log(`Found ${iframeMatches.length} iframe(s) with itch.zone`);
+        log(`Found ${iframeMatches.length} iframe(s) with itch.zone`, 'success');
         const srcMatch = iframeMatches[0].match(/src=["']([^"']+)["']/);
         if (srcMatch) {
             log(`Extracted iframe src: ${srcMatch[1]}`);
@@ -222,6 +282,7 @@ function extractItchZoneLink(htmlContent) {
         }
     }
     
+    log('No itch.zone links found in any pattern', 'warning');
     return null;
 }
 
@@ -234,7 +295,6 @@ function extractHTMLFromGame(htmlContent) {
         log('Found HTML in text/html script tag', 'success');
         return scriptMatch[1].trim();
     }
-    log('No text/html script tag found');
     
     // Pattern 2: Look for base64 encoded HTML in variables
     let varMatch = htmlContent.match(/window\.gameHTML\s*=\s*['"`]([\s\S]*?)['"`]/i);
@@ -247,22 +307,8 @@ function extractHTMLFromGame(htmlContent) {
             return varMatch[1];
         }
     }
-    log('No gameHTML variable found');
     
-    // Pattern 3: Look for data URLs
-    let dataMatch = htmlContent.match(/data:text\/html[^,]*,([^"'`]+)/i);
-    if (dataMatch && dataMatch[1]) {
-        log('Found data URL, attempting to decode...');
-        try {
-            return decodeURIComponent(dataMatch[1]);
-        } catch (e) {
-            log(`Failed to decode data URL: ${e.message}`, 'warning');
-            return dataMatch[1];
-        }
-    }
-    log('No data URL found');
-    
-    // Pattern 4: Look for large base64 blocks
+    // Pattern 3: Look for large base64 blocks
     let base64Match = htmlContent.match(/['"]((?:[A-Za-z0-9+/]{100,}={0,2})+)['"]/);
     if (base64Match && base64Match[1]) {
         log('Found potential base64 block, attempting to decode...');
@@ -276,8 +322,8 @@ function extractHTMLFromGame(htmlContent) {
             log(`Base64 decode failed: ${e.message}`, 'warning');
         }
     }
-    log('No valid base64 blocks found');
     
+    log('No embedded HTML found', 'warning');
     return null;
 }
 
