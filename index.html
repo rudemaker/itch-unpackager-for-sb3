@@ -15,13 +15,15 @@
             <p><strong>⚠️ Disclaimer:</strong> This tool is for personal learning, research, and backup purposes only. Please respect copyright and terms of service. Don't distribute others' games without permission. Use at your own risk. <strong>This is experimental software!</strong></p>
         </div>
 
-        <div class="upload-section">
-            <div class="upload-box" id="uploadBox">
-                <p>Drag and drop your HTML file here</p>
-                <p class="or">or</p>
-                <button class="select-btn" id="selectBtn">Select File</button>
-                <input type="file" id="fileInput" accept=".html" style="display: none;">
-            </div>
+        <div class="input-section">
+            <label for="urlInput">Game URL:</label>
+            <input 
+                type="text" 
+                id="urlInput" 
+                placeholder="https://example.itch.io/your-game"
+                class="url-input"
+            >
+            <button class="extract-btn" id="extractBtn">Extract HTML</button>
         </div>
 
         <div id="progress" class="progress" style="display: none;">
@@ -33,7 +35,7 @@
             <h2>Extraction Result</h2>
             <div id="resultContent"></div>
             <button class="download-btn" id="downloadBtn">Download HTML</button>
-            <button class="reset-btn" id="resetBtn">Process Another File</button>
+            <button class="reset-btn" id="resetBtn">Extract Another Game</button>
         </div>
 
         <div id="error" class="error" style="display: none;">
